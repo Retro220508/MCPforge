@@ -1,0 +1,25 @@
+{
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "framework": "nextjs",
+  "regions": ["iad1"],
+  "env": {
+    "NEXT_PUBLIC_SUPABASE_URL": "@supabase-url",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "@supabase-anon-key",
+    "SUPABASE_SERVICE_ROLE_KEY": "@supabase-service-role-key",
+    "NVIDIA_NIM_API_KEY": "@nvidia-nim-api-key",
+    "NVIDIA_NIM_BASE_URL": "@nvidia-nim-base-url",
+    "NVIDIA_NIM_PRIMARY_MODEL": "@nvidia-nim-primary-model",
+    "NVIDIA_NIM_FAST_MODEL": "@nvidia-nim-fast-model",
+    "STRIPE_SECRET_KEY": "@stripe-secret-key",
+    "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY": "@stripe-publishable-key",
+    "STRIPE_WEBHOOK_SECRET": "@stripe-webhook-secret",
+    "STRIPE_PRO_PRICE_ID": "@stripe-pro-price-id",
+    "NEXT_PUBLIC_POSTHOG_KEY": "@posthog-key",
+    "NEXT_PUBLIC_POSTHOG_HOST": "@posthog-host",
+    "NEXT_PUBLIC_APP_URL": "@app-url",
+    "CRON_SECRET": "@cron-secret",
+    "BROADCAST_SECRET": "@broadcast-secret"
+  }
+}
