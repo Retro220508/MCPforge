@@ -218,6 +218,14 @@ export class MCPValidator {
         suggestedFix:
           'Add tool handlers using server.setRequestHandler(CallToolRequestSchema, async (request) => {...})',
       });
+    } else {
+      // Positive confirmation when handlers are found
+      issues.push({
+        type: 'info',
+        category: 'mcp-compliance',
+        message: '✅ Tool handlers detected (ListToolsRequestSchema and/or CallToolRequestSchema)',
+        severity: 'low',
+      });
     }
 
     // Check for server.connect()
@@ -320,12 +328,64 @@ export class MCPValidator {
   }
 
   /**
+   * Validate API-specific patterns (Slack, etc.)
+   */
+  private static validateAPIPatterns(code: string, issues: ValidationIssue[]): void {
+    // Slack API validation
+    if (code.includes('slack.com/api')) {
+      // Check for Slack API "ok" field validation
+      if (code.includes('response.ok') && !code.includes('data.ok')) {
+        issues.push({
+          type: 'warning',
+          category: 'best-practice',
+          message: 'Slack API may return {ok: false} with HTTP 200. Check data.ok field in addition to response.ok',
+          severity: 'medium',
+          suggestedFix: 'Add: const data = await response.json(); if (!data.ok) throw new Error(data.error);',
+        });
+      }
+
+      // Check for Slack invite API format
+      if (code.includes('conversations.invite') && code.includes('users: [')) {
+        issues.push({
+          type: 'info',
+          category: 'best-practice',
+          message: 'Slack invite API expects users as comma-separated string, not array. Verify API format.',
+          severity: 'low',
+          suggestedFix: 'Use: users: "U123,U456" instead of users: ["U123", "U456"]',
+        });
+      }
+
+      // Check for pagination handling
+      if (!code.includes('cursor') && !code.includes('next_cursor')) {
+        issues.push({
+          type: 'info',
+          category: 'best-practice',
+          message: 'Slack API pagination not detected. Consider handling cursor-based pagination for large datasets.',
+          severity: 'low',
+        });
+      }
+
+      // Check for rate limiting
+      if (!code.includes('rate') && !code.includes('retry') && !code.includes('429')) {
+        issues.push({
+          type: 'info',
+          category: 'best-practice',
+          message: 'No rate limiting detected. Consider handling Slack API rate limits (429 responses).',
+          severity: 'low',
+        });
+      }
+    }
+  }
+
+  /**
    * Validate best practices
    */
   private static validateBestPractices(
     code: string,
     issues: ValidationIssue[]
   ): void {
+    // Check API-specific patterns first
+    this.validateAPIPatterns(code, issues);
     const lines = code.split('\n');
 
     // Check for error handling around async operations - CORRECT CHECK
