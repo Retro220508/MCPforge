@@ -1,106 +1,60 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { nvidiaNimClient } from '@/lib/nvidia-nim';
 
 /**
- * POST /api/ai/generate
+ * POST /api/forge/validate
  * 
- * Generate AI completions using NVIDIA NIM API
+ * Validate generated MCP server code for syntax and security issues
  * 
  * Request body:
  * {
- *   "prompt": "Your prompt here",
- *   "systemPrompt": "Optional system prompt",
- *   "model": "primary" | "fast" (optional, defaults to "primary"),
- *   "temperature": 0.7 (optional),
- *   "maxTokens": 1024 (optional)
+ *   "code": "string - the TypeScript code to validate"
  * }
  */
+
+interface ValidationIssue {
+  type: 'error' | 'warning' | 'info';
+  message: string;
+  line?: number;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+}
+
+interface ValidationResult {
+  valid: boolean;
+  score: number;
+  issues: ValidationIssue[];
+  dependencies: string[];
+  hasShebang: boolean;
+  hasMcpImports: boolean;
+  hasServerSetup: boolean;
+  hasToolHandlers: boolean;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { 
-      prompt, 
-      systemPrompt, 
-      model = 'primary',
-      temperature,
-      maxTokens 
-    } = body;
+    const { code } = body;
 
-    // Validate required fields
-    if (!prompt || typeof prompt !== 'string') {
+    if (!code || typeof code !== 'string') {
       return NextResponse.json(
-        { error: 'Prompt is required and must be a string' },
+        { error: 'Code is required and must be a string' },
         { status: 400 }
       );
     }
 
-    // Validate model selection
-    if (model !== 'primary' && model !== 'fast') {
-      return NextResponse.json(
-        { error: 'Model must be either "primary" or "fast"' },
-        { status: 400 }
-      );
-    }
+    const result = validateCode(code);
 
-    // Generate completion using the appropriate model
-    let completion: string;
-    
-    if (model === 'fast') {
-      completion = await nvidiaNimClient.generateWithFastModel(
-        prompt,
-        systemPrompt,
-        { temperature, maxTokens }
-      );
-    } else {
-      completion = await nvidiaNimClient.generateWithPrimaryModel(
-        prompt,
-        systemPrompt,
-        { temperature, maxTokens }
-      );
-    }
-
-    // Return the completion
     return NextResponse.json({
       success: true,
-      completion,
-      model: model === 'fast' 
-        ? nvidiaNimClient.getModels().fast 
-        : nvidiaNimClient.getModels().primary,
+      validation: result,
       timestamp: new Date().toISOString(),
     });
 
   } catch (error) {
-    console.error('Error generating AI completion:', error);
+    console.error('Error validating code:', error);
     
-    // Handle specific error types
-    if (error instanceof Error) {
-      // Check for API key errors
-      if (error.message.includes('NVIDIA_NIM_API_KEY')) {
-        return NextResponse.json(
-          { 
-            error: 'NVIDIA NIM API key is not configured',
-            details: 'Please set the NVIDIA_NIM_API_KEY environment variable'
-          },
-          { status: 500 }
-        );
-      }
-
-      // Check for API errors
-      if (error.message.includes('NVIDIA NIM API error')) {
-        return NextResponse.json(
-          { 
-            error: 'NVIDIA NIM API error',
-            details: error.message
-          },
-          { status: 502 }
-        );
-      }
-    }
-
-    // Generic error response
     return NextResponse.json(
       { 
-        error: 'Failed to generate completion',
+        error: 'Failed to validate code',
         details: error instanceof Error ? error.message : 'Unknown error'
       },
       { status: 500 }
@@ -108,43 +62,193 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/**
- * GET /api/ai/generate
- * 
- * Get information about available models
- */
-export async function GET() {
-  try {
-    const models = nvidiaNimClient.getModels();
-    
-    return NextResponse.json({
-      success: true,
-      models: {
-        primary: {
-          name: models.primary,
-          description: 'Larger, more capable model for complex tasks',
-          recommended_for: ['Complex reasoning', 'Long-form content', 'Detailed analysis']
-        },
-        fast: {
-          name: models.fast,
-          description: 'Smaller, faster model for simple tasks',
-          recommended_for: ['Quick responses', 'Simple queries', 'Real-time interactions']
-        }
-      },
-      endpoint: '/api/ai/generate',
-      methods: ['POST'],
+function validateCode(code: string): ValidationResult {
+  const issues: ValidationIssue[] = [];
+  const lines = code.split('\n');
+  
+  // Check for shebang
+  const hasShebang = lines[0]?.trim().startsWith('#!');
+  if (!hasShebang) {
+    issues.push({
+      type: 'warning',
+      message: 'Missing shebang line (#!/usr/bin/env node)',
+      line: 1,
+      severity: 'low'
     });
-  } catch (error) {
-    console.error('Error fetching model information:', error);
-    
-    return NextResponse.json(
-      { 
-        error: 'Failed to fetch model information',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      },
-      { status: 500 }
-    );
   }
+
+  // Check for MCP imports
+  const hasMcpImports = code.includes('@modelcontextprotocol/sdk');
+  if (!hasMcpImports) {
+    issues.push({
+      type: 'error',
+      message: 'Missing @modelcontextprotocol/sdk import',
+      severity: 'critical'
+    });
+  }
+
+  // Check for Server setup
+  const hasServerSetup = code.includes('new Server(') || code.includes('Server(');
+  if (!hasServerSetup) {
+    issues.push({
+      type: 'error',
+      message: 'Missing MCP Server initialization',
+      severity: 'critical'
+    });
+  }
+
+  // Check for tool handlers
+  const hasToolHandlers = code.includes('setRequestHandler') && 
+                          (code.includes('tools/list') || code.includes('tools/call'));
+  if (!hasToolHandlers) {
+    issues.push({
+      type: 'warning',
+      message: 'No tool handlers detected',
+      severity: 'medium'
+    });
+  }
+
+  // Security checks - dangerous patterns
+  const dangerousPatterns = [
+    { pattern: /eval\s*\(/g, message: 'Use of eval() is dangerous', severity: 'critical' as const },
+    { pattern: /Function\s*\(/g, message: 'Use of Function constructor is dangerous', severity: 'critical' as const },
+    { pattern: /exec\s*\(/g, message: 'Use of exec() requires careful review', severity: 'high' as const },
+    { pattern: /child_process/g, message: 'Child process usage requires security review', severity: 'high' as const },
+    { pattern: /fs\.unlink|fs\.rm/g, message: 'File deletion requires careful validation', severity: 'high' as const },
+    { pattern: /process\.env\[/g, message: 'Dynamic env access should be validated', severity: 'medium' as const },
+  ];
+
+  dangerousPatterns.forEach(({ pattern, message, severity }) => {
+    const matches = code.match(pattern);
+    if (matches) {
+      lines.forEach((line, idx) => {
+        if (pattern.test(line)) {
+          issues.push({
+            type: severity === 'critical' ? 'error' : 'warning',
+            message,
+            line: idx + 1,
+            severity
+          });
+        }
+      });
+    }
+  });
+
+  // Check for basic syntax issues
+  const syntaxIssues = checkBasicSyntax(code, lines);
+  issues.push(...syntaxIssues);
+
+  // Extract dependencies
+  const dependencies = extractDependencies(code);
+
+  // Calculate score (0-100)
+  let score = 100;
+  issues.forEach(issue => {
+    switch (issue.severity) {
+      case 'critical': score -= 20; break;
+      case 'high': score -= 10; break;
+      case 'medium': score -= 5; break;
+      case 'low': score -= 2; break;
+    }
+  });
+  score = Math.max(0, Math.min(100, score));
+
+  const valid = issues.filter(i => i.type === 'error').length === 0;
+
+  return {
+    valid,
+    score,
+    issues,
+    dependencies,
+    hasShebang,
+    hasMcpImports,
+    hasServerSetup,
+    hasToolHandlers,
+  };
+}
+
+function checkBasicSyntax(code: string, lines: string[]): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  // Check for unmatched braces
+  const openBraces = (code.match(/{/g) || []).length;
+  const closeBraces = (code.match(/}/g) || []).length;
+  if (openBraces !== closeBraces) {
+    issues.push({
+      type: 'error',
+      message: `Unmatched braces: ${openBraces} opening, ${closeBraces} closing`,
+      severity: 'critical'
+    });
+  }
+
+  // Check for unmatched parentheses
+  const openParens = (code.match(/\(/g) || []).length;
+  const closeParens = (code.match(/\)/g) || []).length;
+  if (openParens !== closeParens) {
+    issues.push({
+      type: 'error',
+      message: `Unmatched parentheses: ${openParens} opening, ${closeParens} closing`,
+      severity: 'critical'
+    });
+  }
+
+  // Check for async/await usage
+  const hasAsync = code.includes('async ');
+  const hasAwait = code.includes('await ');
+  if (hasAwait && !hasAsync) {
+    issues.push({
+      type: 'warning',
+      message: 'Using await without async function',
+      severity: 'high'
+    });
+  }
+
+  // Check for proper error handling
+  const hasTryCatch = code.includes('try') && code.includes('catch');
+  const hasAsyncOperations = code.includes('await') || code.includes('.then(');
+  if (hasAsyncOperations && !hasTryCatch) {
+    issues.push({
+      type: 'warning',
+      message: 'Async operations without try-catch error handling',
+      severity: 'medium'
+    });
+  }
+
+  return issues;
+}
+
+function extractDependencies(code: string): string[] {
+  const deps = new Set<string>();
+  
+  // Match import statements
+  const importRegex = /import\s+.*?\s+from\s+['"]([^'"]+)['"]/g;
+  let match;
+  
+  while ((match = importRegex.exec(code)) !== null) {
+    const dep = match[1];
+    // Only include external packages (not relative imports)
+    if (!dep.startsWith('.') && !dep.startsWith('/')) {
+      // Extract package name (handle scoped packages)
+      const pkgName = dep.startsWith('@') 
+        ? dep.split('/').slice(0, 2).join('/')
+        : dep.split('/')[0];
+      deps.add(pkgName);
+    }
+  }
+
+  // Match require statements
+  const requireRegex = /require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+  while ((match = requireRegex.exec(code)) !== null) {
+    const dep = match[1];
+    if (!dep.startsWith('.') && !dep.startsWith('/')) {
+      const pkgName = dep.startsWith('@') 
+        ? dep.split('/').slice(0, 2).join('/')
+        : dep.split('/')[0];
+      deps.add(pkgName);
+    }
+  }
+
+  return Array.from(deps).sort();
 }
 
 // Made with Bob
