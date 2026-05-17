@@ -3,6 +3,5 @@
   "devCommand": "cd mcpforge && npm run dev",
   "installCommand": "cd mcpforge && npm install",
   "framework": "nextjs",
-  "outputDirectory": "mcpforge/.next",
-  "regions": ["iad1"]
+  "outputDirectory": "mcpforge/.next"
 }
