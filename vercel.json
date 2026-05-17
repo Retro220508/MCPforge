@@ -1,7 +1,3 @@
 {
-  "buildCommand": "cd mcpforge && npm run build",
-  "devCommand": "cd mcpforge && npm run dev",
-  "installCommand": "cd mcpforge && npm install",
-  "framework": "nextjs",
-  "outputDirectory": "mcpforge/.next"
+  "framework": "nextjs"
 }
